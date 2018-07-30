@@ -1,6 +1,17 @@
 package com.redhat.developer.demos.customer;
 
+import io.jaegertracing.SpanContext;
+import io.opentracing.Scope;
+import io.opentracing.Span;
 import io.opentracing.Tracer;
+import io.opentracing.propagation.Format.Builtin;
+import io.opentracing.propagation.TextMap;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.util.Iterator;
+import java.util.Map.Entry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -40,7 +51,12 @@ public class CustomerController {
              */
             tracer.activeSpan().setBaggageItem("user-agent", userAgent);
 
+            createURLRequest();
+
+            Scope scope = tracer.buildSpan("wrapper").startActive(true);
             ResponseEntity<String> responseEntity = restTemplate.getForEntity(remoteURL, String.class);
+            scope.close();
+
             String response = responseEntity.getBody();
             return ResponseEntity.ok(String.format(RESPONSE_STRING_FORMAT, response.trim()));
         } catch (HttpStatusCodeException ex) {
@@ -63,4 +79,39 @@ public class CustomerController {
         return responseBody;
     }
 
+
+    private void createURLRequest() {
+        io.jaegertracing.Tracer jaeger = (io.jaegertracing.Tracer) tracer;
+        try (Scope scope = tracer.buildSpan("urlConnection").startActive(true)) {
+            URL url = new URL("http://preference:8080");
+            HttpURLConnection con = (HttpURLConnection) url.openConnection();
+            con.setRequestMethod("GET");
+            tracer.inject(tracer.activeSpan().context(), Builtin.HTTP_HEADERS, new HttpUrlConnectionInject(con));
+            BufferedReader in = new BufferedReader(new InputStreamReader(con.getInputStream()));
+            String inputLine;
+            while ((inputLine = in.readLine()) != null) {
+                System.out.println(inputLine);
+            }
+        } catch (Exception ex) {
+            ex.printStackTrace();
+        }
+    }
+
+    private class HttpUrlConnectionInject implements TextMap {
+        HttpURLConnection urlConnection;
+
+        public HttpUrlConnectionInject(HttpURLConnection urlConnectionInject){
+            this.urlConnection = urlConnectionInject;
+        }
+
+        @Override
+        public Iterator<Entry<String, String>> iterator() {
+            return null;
+        }
+
+        @Override
+        public void put(String s, String s1) {
+            urlConnection.setRequestProperty(s, s1);
+        }
+    }
 }
